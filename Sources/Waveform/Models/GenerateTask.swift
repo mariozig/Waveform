@@ -22,6 +22,63 @@ class GenerateTask {
         isCancelled.withLock { $0 = true }
     }
 
+    // MARK: - New path: direct audio range (used by ClipRenderer)
+
+    /// Generates waveform data for a direct audio file sample range.
+    /// No virtual padding — the caller handles clip positioning.
+    func resume(
+        width: CGFloat,
+        audioRange: Range<Int>,
+        displayMode: WaveformDisplayMode = .normal,
+        completion: @escaping ([SampleData]) -> Void
+    ) {
+        let pixelCount = Int(width)
+        var sampleData = [SampleData](repeating: .zero, count: pixelCount)
+
+        DispatchQueue.global(qos: .userInteractive).async {
+            let channels = Int(self.audioBuffer.format.channelCount)
+            let samplesPerPoint = audioRange.count / pixelCount
+
+            guard let floatChannelData = self.audioBuffer.floatChannelData else { return }
+            guard samplesPerPoint > 0 else { return }
+
+            DispatchQueue.concurrentPerform(iterations: pixelCount) { point in
+                guard !self.isCancelled.withLock({ $0 }) else { return }
+
+                let start = audioRange.lowerBound + (point * samplesPerPoint)
+                let length = samplesPerPoint
+
+                guard start >= 0, start + length <= Int(self.audioBuffer.frameLength) else { return }
+
+                var data: SampleData = .zero
+                for channel in 0..<channels {
+                    let pointer = floatChannelData[channel].advanced(by: start)
+                    let stride = vDSP_Stride(self.audioBuffer.stride)
+                    let len = vDSP_Length(length)
+
+                    var value: Float = 0
+                    vDSP_minv(pointer, stride, &value, len)
+                    data.min = min(value, data.min)
+
+                    vDSP_maxv(pointer, stride, &value, len)
+                    data.max = max(value, data.max)
+                }
+                sampleData[point] = data
+            }
+
+            if displayMode == .transientHighlight {
+                TransientDetector.computeWeights(&sampleData)
+            }
+
+            DispatchQueue.main.async {
+                guard !self.isCancelled.withLock({ $0 }) else { return }
+                completion(sampleData)
+            }
+        }
+    }
+
+    // MARK: - Legacy path: virtual padding (used by WaveformGenerator)
+
     func resume(
         width: CGFloat,
         renderSamples: SampleRange,
@@ -41,20 +98,16 @@ class GenerateTask {
             DispatchQueue.concurrentPerform(iterations: Int(width)) { point in
                 guard !self.isCancelled.withLock({ $0 }) else { return }
 
-                // Calculate virtual sample range for this point
                 let pointStartVirtual = renderSamples.lowerBound + (point * samplesPerPoint)
                 let pointEndVirtual = pointStartVirtual + samplesPerPoint
 
-                // Check if entirely in padding zones
                 let fullyInPrepend = pointEndVirtual <= self.samplesToPrepend
                 let fullyInAppend = pointStartVirtual >= (self.samplesToPrepend + actualSampleCount)
 
                 if fullyInPrepend || fullyInAppend {
-                    // Already .zero, skip
                     return
                 }
 
-                // Calculate actual buffer range (clamped to real audio)
                 let actualStart = max(pointStartVirtual, self.samplesToPrepend) - self.samplesToPrepend
                 let actualEnd = min(pointEndVirtual, self.samplesToPrepend + actualSampleCount) - self.samplesToPrepend
                 let actualLength = actualEnd - actualStart
@@ -78,7 +131,6 @@ class GenerateTask {
                 sampleData[point] = data
             }
 
-            // Compute transient weights if in highlight mode
             if displayMode == .transientHighlight {
                 TransientDetector.computeWeights(&sampleData)
             }
