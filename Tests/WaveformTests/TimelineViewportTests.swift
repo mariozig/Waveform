@@ -82,6 +82,20 @@ struct TimelineViewportTests {
         #expect(zoomed.visibleRange.upperBound <= 10000)
     }
 
+    @Test("zoom respects minVisibleCount floor")
+    func zoomMinVisibleCount() {
+        let vp = TimelineViewport(visibleRange: 4000..<6000, totalLength: 10000)
+        let zoomed = vp.zoomed(by: 100, minVisibleCount: 800) // extreme zoom in
+        #expect(zoomed.visibleCount >= 800)
+    }
+
+    @Test("zoom without minVisibleCount can go to 1")
+    func zoomNoFloor() {
+        let vp = TimelineViewport(visibleRange: 4999..<5001, totalLength: 10000)
+        let zoomed = vp.zoomed(by: 100) // extreme zoom in, no floor
+        #expect(zoomed.visibleCount >= 1)
+    }
+
     @Test("zoom preserves center")
     func zoomPreservesCenter() {
         let vp = TimelineViewport(visibleRange: 4000..<6000, totalLength: 10000)

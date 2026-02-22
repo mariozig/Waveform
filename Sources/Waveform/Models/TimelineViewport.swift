@@ -43,10 +43,12 @@ public struct TimelineViewport: Equatable, Sendable {
 
     /// Returns a new viewport zoomed by the given factor around the center.
     /// factor > 1 zooms in, < 1 zooms out.
-    public func zoomed(by factor: CGFloat) -> TimelineViewport {
+    /// - Parameter minVisibleCount: Floor for visible samples (prevents extreme zoom).
+    public func zoomed(by factor: CGFloat, minVisibleCount: Int? = nil) -> TimelineViewport {
         guard totalLength > 0 else { return self }
         let count = visibleRange.count
-        let newCount = max(1, Int(CGFloat(count) / factor))
+        let floor = max(1, minVisibleCount ?? 1)
+        let newCount = max(floor, Int(CGFloat(count) / factor))
         let center = visibleRange.lowerBound + count / 2
         let halfNew = newCount / 2
 

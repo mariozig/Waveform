@@ -39,8 +39,14 @@ class GenerateTask {
             let channels = Int(self.audioBuffer.format.channelCount)
             let samplesPerPoint = audioRange.count / pixelCount
 
-            guard let floatChannelData = self.audioBuffer.floatChannelData else { return }
-            guard samplesPerPoint > 0 else { return }
+            guard let floatChannelData = self.audioBuffer.floatChannelData else {
+                DispatchQueue.main.async { completion(sampleData) }
+                return
+            }
+            guard samplesPerPoint > 0 else {
+                DispatchQueue.main.async { completion(sampleData) }
+                return
+            }
 
             DispatchQueue.concurrentPerform(iterations: pixelCount) { point in
                 guard !self.isCancelled.withLock({ $0 }) else { return }
