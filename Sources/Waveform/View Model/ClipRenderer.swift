@@ -23,6 +23,7 @@ public class ClipRenderer: ObservableObject {
     /// ClipWaveformView offsets the Renderer by this amount to align visible content.
     @Published public private(set) var leftPaddingPixels: CGFloat = 0
 
+    private var loadTask: Task<(AVAudioPCMBuffer, Int, Int), any Error>?
     private var generateTask: GenerateTask?
     private var lastViewport: TimelineViewport?
     private var lastClip: ClipDescriptor?
@@ -34,8 +35,10 @@ public class ClipRenderer: ObservableObject {
     // MARK: - Loading
 
     /// Loads audio from a URL on a background thread.
+    /// Cancels any in-flight load before starting.
     public func loadAsync(url: URL) async throws {
-        let (buffer, frameCount, sampleRate) = try await Task.detached(priority: .userInitiated) {
+        loadTask?.cancel()
+        let task = Task.detached(priority: .userInitiated) {
             let audioFile = try AVAudioFile(forReading: url)
             let capacity = AVAudioFrameCount(audioFile.length)
             guard let buffer = AVAudioPCMBuffer(
@@ -46,13 +49,14 @@ public class ClipRenderer: ObservableObject {
             }
             try audioFile.read(into: buffer)
             return (buffer, Int(capacity), Int(audioFile.processingFormat.sampleRate))
-        }.value
-
-        await MainActor.run {
-            self.audioBuffer = buffer
-            self.audioFrameCount = frameCount
-            self.audioSampleRate = sampleRate
         }
+        loadTask = task
+        let (buffer, frameCount, sampleRate) = try await task.value
+
+        guard !Task.isCancelled else { return }
+        self.audioBuffer = buffer
+        self.audioFrameCount = frameCount
+        self.audioSampleRate = sampleRate
     }
 
     public var isLoaded: Bool { audioBuffer != nil }

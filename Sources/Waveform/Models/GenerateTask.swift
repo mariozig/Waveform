@@ -48,28 +48,30 @@ class GenerateTask {
                 return
             }
 
-            DispatchQueue.concurrentPerform(iterations: pixelCount) { point in
-                guard !self.isCancelled.withLock({ $0 }) else { return }
+            sampleData.withUnsafeMutableBufferPointer { buffer in
+                DispatchQueue.concurrentPerform(iterations: pixelCount) { point in
+                    guard !self.isCancelled.withLock({ $0 }) else { return }
 
-                let start = audioRange.lowerBound + (point * samplesPerPoint)
-                let length = samplesPerPoint
+                    let start = audioRange.lowerBound + (point * samplesPerPoint)
+                    let length = samplesPerPoint
 
-                guard start >= 0, start + length <= Int(self.audioBuffer.frameLength) else { return }
+                    guard start >= 0, start + length <= Int(self.audioBuffer.frameLength) else { return }
 
-                var data: SampleData = .zero
-                for channel in 0..<channels {
-                    let pointer = floatChannelData[channel].advanced(by: start)
-                    let stride = vDSP_Stride(self.audioBuffer.stride)
-                    let len = vDSP_Length(length)
+                    var data: SampleData = .zero
+                    for channel in 0..<channels {
+                        let pointer = floatChannelData[channel].advanced(by: start)
+                        let stride = vDSP_Stride(self.audioBuffer.stride)
+                        let len = vDSP_Length(length)
 
-                    var value: Float = 0
-                    vDSP_minv(pointer, stride, &value, len)
-                    data.min = min(value, data.min)
+                        var value: Float = 0
+                        vDSP_minv(pointer, stride, &value, len)
+                        data.min = min(value, data.min)
 
-                    vDSP_maxv(pointer, stride, &value, len)
-                    data.max = max(value, data.max)
+                        vDSP_maxv(pointer, stride, &value, len)
+                        data.max = max(value, data.max)
+                    }
+                    buffer[point] = data
                 }
-                sampleData[point] = data
             }
 
             if displayMode == .transientHighlight {
@@ -101,40 +103,42 @@ class GenerateTask {
             guard let floatChannelData = self.audioBuffer.floatChannelData else { return }
             guard samplesPerPoint > 0 else { return }
 
-            DispatchQueue.concurrentPerform(iterations: Int(width)) { point in
-                guard !self.isCancelled.withLock({ $0 }) else { return }
+            sampleData.withUnsafeMutableBufferPointer { buffer in
+                DispatchQueue.concurrentPerform(iterations: Int(width)) { point in
+                    guard !self.isCancelled.withLock({ $0 }) else { return }
 
-                let pointStartVirtual = renderSamples.lowerBound + (point * samplesPerPoint)
-                let pointEndVirtual = pointStartVirtual + samplesPerPoint
+                    let pointStartVirtual = renderSamples.lowerBound + (point * samplesPerPoint)
+                    let pointEndVirtual = pointStartVirtual + samplesPerPoint
 
-                let fullyInPrepend = pointEndVirtual <= self.samplesToPrepend
-                let fullyInAppend = pointStartVirtual >= (self.samplesToPrepend + actualSampleCount)
+                    let fullyInPrepend = pointEndVirtual <= self.samplesToPrepend
+                    let fullyInAppend = pointStartVirtual >= (self.samplesToPrepend + actualSampleCount)
 
-                if fullyInPrepend || fullyInAppend {
-                    return
+                    if fullyInPrepend || fullyInAppend {
+                        return
+                    }
+
+                    let actualStart = max(pointStartVirtual, self.samplesToPrepend) - self.samplesToPrepend
+                    let actualEnd = min(pointEndVirtual, self.samplesToPrepend + actualSampleCount) - self.samplesToPrepend
+                    let actualLength = actualEnd - actualStart
+
+                    guard actualLength > 0 else { return }
+
+                    var data: SampleData = .zero
+                    for channel in 0..<channels {
+                        let pointer = floatChannelData[channel].advanced(by: actualStart)
+                        let stride = vDSP_Stride(self.audioBuffer.stride)
+                        let length = vDSP_Length(actualLength)
+
+                        var value: Float = 0
+
+                        vDSP_minv(pointer, stride, &value, length)
+                        data.min = min(value, data.min)
+
+                        vDSP_maxv(pointer, stride, &value, length)
+                        data.max = max(value, data.max)
+                    }
+                    buffer[point] = data
                 }
-
-                let actualStart = max(pointStartVirtual, self.samplesToPrepend) - self.samplesToPrepend
-                let actualEnd = min(pointEndVirtual, self.samplesToPrepend + actualSampleCount) - self.samplesToPrepend
-                let actualLength = actualEnd - actualStart
-
-                guard actualLength > 0 else { return }
-
-                var data: SampleData = .zero
-                for channel in 0..<channels {
-                    let pointer = floatChannelData[channel].advanced(by: actualStart)
-                    let stride = vDSP_Stride(self.audioBuffer.stride)
-                    let length = vDSP_Length(actualLength)
-
-                    var value: Float = 0
-
-                    vDSP_minv(pointer, stride, &value, length)
-                    data.min = min(value, data.min)
-
-                    vDSP_maxv(pointer, stride, &value, length)
-                    data.max = max(value, data.max)
-                }
-                sampleData[point] = data
             }
 
             if displayMode == .transientHighlight {
