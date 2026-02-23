@@ -19,6 +19,10 @@ public class ClipRenderer: ObservableObject {
     /// Used by ClipWaveformView to apply synchronous offset correction during panning.
     @Published public private(set) var renderedViewport: TimelineViewport?
 
+    /// How far left of screen the padded data extends (pixels).
+    /// ClipWaveformView offsets the Renderer by this amount to align visible content.
+    @Published public private(set) var leftPaddingPixels: CGFloat = 0
+
     private var generateTask: GenerateTask?
     private var lastViewport: TimelineViewport?
     private var lastClip: ClipDescriptor?
@@ -85,47 +89,44 @@ public class ClipRenderer: ObservableObject {
         let visibleClipStart = max(clipRange.lowerBound, visibleRange.lowerBound)
         let visibleClipEnd = min(clipRange.upperBound, visibleRange.upperBound)
 
-        // Map to audio file sample coordinates
-        let audioStart = clip.inPoint + (visibleClipStart - clip.timelinePosition)
-        let audioEnd = clip.inPoint + (visibleClipEnd - clip.timelinePosition)
+        // Expand by padding (50% of visible width each side) to cover panCorrectionOffset gaps
+        let paddingSamples = visibleRange.count / 2
+        let paddedClipStart = max(clipRange.lowerBound, visibleClipStart - paddingSamples)
+        let paddedClipEnd = min(clipRange.upperBound, visibleClipEnd + paddingSamples)
+
+        // Map padded range to audio file sample coordinates
+        let audioStart = clip.inPoint + (paddedClipStart - clip.timelinePosition)
+        let audioEnd = clip.inPoint + (paddedClipEnd - clip.timelinePosition)
         let audioRange = max(0, audioStart)..<min(audioEnd, clip.audioFrameCount)
 
         guard audioRange.count > 0 else {
             sampleData = []
+            leftPaddingPixels = 0
             return
         }
 
-        // Compute pixel range within the view
-        let pixelStart = viewport.screenX(for: visibleClipStart, viewWidth: width)
-        let pixelEnd = viewport.screenX(for: visibleClipEnd, viewWidth: width)
-        let pixelWidth = Int(max(1, pixelEnd - pixelStart))
+        // Compute pixel positions for the padded range
+        let paddedPixelStart = viewport.screenX(for: paddedClipStart, viewWidth: width)
+        let paddedPixelEnd = viewport.screenX(for: paddedClipEnd, viewWidth: width)
+        let paddedPixelWidth = Int(max(1, paddedPixelEnd - paddedPixelStart))
+
+        // Left padding = how far left of screen the padded region starts
+        let leftPad = max(0, -paddedPixelStart)
 
         let task = GenerateTask(audioBuffer: audioBuffer)
         generateTask = task
 
         let capturedViewport = viewport
+        let capturedLeftPad = leftPad
 
         task.resume(
-            width: CGFloat(pixelWidth),
+            width: CGFloat(paddedPixelWidth),
             audioRange: audioRange,
             displayMode: displayMode
         ) { [weak self] data in
             guard let self else { return }
-
-            // Build full-width sample data with the clip portion at the correct offset
-            let totalPixels = Int(width)
-            let startPixel = max(0, Int(pixelStart))
-
-            if startPixel == 0 && data.count == totalPixels {
-                self.sampleData = data
-            } else {
-                var fullData = [SampleData](repeating: .zero, count: totalPixels)
-                let copyCount = min(data.count, totalPixels - startPixel)
-                for i in 0..<copyCount {
-                    fullData[startPixel + i] = data[i]
-                }
-                self.sampleData = fullData
-            }
+            self.sampleData = data
+            self.leftPaddingPixels = capturedLeftPad
             self.renderedViewport = capturedViewport
         }
     }

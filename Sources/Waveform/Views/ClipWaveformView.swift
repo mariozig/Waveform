@@ -17,7 +17,7 @@ public struct ClipWaveformView: View {
         GeometryReader { geometry in
             let width = geometry.size.width
             Renderer(waveformData: renderer.sampleData, displayMode: renderer.displayMode)
-                .offset(x: panCorrectionOffset(viewWidth: width))
+                .offset(x: panCorrectionOffset(viewWidth: width) - renderer.leftPaddingPixels)
                 .onChange(of: viewport) { _, newViewport in
                     renderer.update(viewport: newViewport, clip: clip, width: width)
                 }
