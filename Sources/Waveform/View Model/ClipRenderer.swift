@@ -15,6 +15,10 @@ public class ClipRenderer: ObservableObject {
     @Published public private(set) var sampleData: [SampleData] = []
     @Published public var displayMode: WaveformDisplayMode = .normal
 
+    /// The viewport that the current sampleData was rendered for.
+    /// Used by ClipWaveformView to apply synchronous offset correction during panning.
+    @Published public private(set) var renderedViewport: TimelineViewport?
+
     private var generateTask: GenerateTask?
     private var lastViewport: TimelineViewport?
     private var lastClip: ClipDescriptor?
@@ -99,6 +103,8 @@ public class ClipRenderer: ObservableObject {
         let task = GenerateTask(audioBuffer: audioBuffer)
         generateTask = task
 
+        let capturedViewport = viewport
+
         task.resume(
             width: CGFloat(pixelWidth),
             audioRange: audioRange,
@@ -120,6 +126,7 @@ public class ClipRenderer: ObservableObject {
                 }
                 self.sampleData = fullData
             }
+            self.renderedViewport = capturedViewport
         }
     }
 
