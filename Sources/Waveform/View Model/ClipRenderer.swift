@@ -12,6 +12,8 @@ public struct RenderSnapshot: Equatable {
 
     public static let empty = RenderSnapshot(sampleData: [], paddedTimelineStart: 0, samplesPerPixel: 1)
 
+    /// Compares metadata only (not sample contents) to avoid O(n) array comparisons.
+    /// Safe because re-renders always produce different paddedTimelineStart or samplesPerPixel.
     public static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.paddedTimelineStart == rhs.paddedTimelineStart
             && lhs.samplesPerPixel == rhs.samplesPerPixel
@@ -37,6 +39,7 @@ public class ClipRenderer: ObservableObject {
 
     private var loadTask: Task<(AVAudioPCMBuffer, Int, Int), any Error>?
     private var generateTask: GenerateTask?
+    private var renderGeneration: Int = 0
     private var lastViewport: TimelineViewport?
     private var lastClip: ClipDescriptor?
     private var lastWidth: CGFloat = 0
@@ -72,6 +75,11 @@ public class ClipRenderer: ObservableObject {
     }
 
     public var isLoaded: Bool { audioBuffer != nil }
+
+    /// Cancels any in-flight render task.
+    public func cancelRender() {
+        generateTask?.cancel()
+    }
 
     // MARK: - Rendering
 
@@ -131,6 +139,9 @@ public class ClipRenderer: ObservableObject {
             return
         }
 
+        renderGeneration += 1
+        let expectedGeneration = renderGeneration
+
         let task = GenerateTask(audioBuffer: audioBuffer)
         generateTask = task
 
@@ -140,7 +151,7 @@ public class ClipRenderer: ObservableObject {
             displayMode: displayMode
         ) { [weak self] data in
             Task { @MainActor [weak self] in
-                guard let self else { return }
+                guard let self, self.renderGeneration == expectedGeneration else { return }
                 self.snapshot = RenderSnapshot(
                     sampleData: data,
                     paddedTimelineStart: renderRange.paddedTimelineStart,
