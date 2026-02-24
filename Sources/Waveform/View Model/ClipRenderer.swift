@@ -1,6 +1,24 @@
 import AVFoundation
 import SwiftUI
 
+/// Atomic snapshot of a completed render — published as a single value
+/// so SwiftUI never sees partially-updated state.
+public struct RenderSnapshot: Equatable {
+    public var sampleData: [SampleData]
+    /// Timeline sample position of the first rendered pixel.
+    public var paddedTimelineStart: Int
+    /// Exact samples-per-pixel (floating point to avoid quantization jitter).
+    public var samplesPerPixel: Double
+
+    public static let empty = RenderSnapshot(sampleData: [], paddedTimelineStart: 0, samplesPerPixel: 1)
+
+    public static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.paddedTimelineStart == rhs.paddedTimelineStart
+            && lhs.samplesPerPixel == rhs.samplesPerPixel
+            && lhs.sampleData.count == rhs.sampleData.count
+    }
+}
+
 /// Renders audio for a clip given a viewport. Does not own viewport state.
 /// Replaces `WaveformGenerator` — viewport is externally driven.
 @MainActor
@@ -12,16 +30,10 @@ public class ClipRenderer: ObservableObject {
     /// Sample rate of the loaded audio.
     public private(set) var audioSampleRate: Int = 0
 
-    @Published public private(set) var sampleData: [SampleData] = []
+    /// Single atomic snapshot of the latest render output.
+    @Published public private(set) var snapshot: RenderSnapshot = .empty
+
     @Published public var displayMode: WaveformDisplayMode = .normal
-
-    /// The viewport that the current sampleData was rendered for.
-    /// Used by ClipWaveformView to apply synchronous offset correction during panning.
-    @Published public private(set) var renderedViewport: TimelineViewport?
-
-    /// How far left of screen the padded data extends (pixels).
-    /// ClipWaveformView offsets the Renderer by this amount to align visible content.
-    @Published public private(set) var leftPaddingPixels: CGFloat = 0
 
     private var loadTask: Task<(AVAudioPCMBuffer, Int, Int), any Error>?
     private var generateTask: GenerateTask?
@@ -72,12 +84,15 @@ public class ClipRenderer: ObservableObject {
         if viewport == lastViewport && clip == lastClip && width == lastWidth && displayMode == lastDisplayMode {
             return
         }
+
+        let clipChanged = clip != lastClip
+        let displayModeChanged = displayMode != lastDisplayMode
+        let widthChanged = width != lastWidth
+
         lastViewport = viewport
         lastClip = clip
         lastWidth = width
         lastDisplayMode = displayMode
-
-        generateTask?.cancel()
 
         // Intersect clip's timeline range with visible range
         let clipRange = clip.timelineRange
@@ -85,15 +100,37 @@ public class ClipRenderer: ObservableObject {
 
         guard clipRange.overlaps(visibleRange) else {
             // Clip not visible — clear
-            sampleData = []
+            generateTask?.cancel()
+            snapshot = .empty
             return
         }
+
+        // Check if the existing render still covers the visible range with adequate resolution.
+        // If so, skip re-rendering — the correction transform handles viewport changes smoothly.
+        if !clipChanged && !displayModeChanged && !widthChanged && snapshot.sampleData.count > 0 {
+            let snap = snapshot
+            let renderedEnd = snap.paddedTimelineStart + Int(Double(snap.sampleData.count) * snap.samplesPerPixel)
+            let visibleCovered = snap.paddedTimelineStart <= visibleRange.lowerBound
+                && renderedEnd >= visibleRange.upperBound
+
+            // Check zoom: current ideal spp vs rendered spp
+            let idealSpp = Double(visibleRange.count) / Double(width)
+            let zoomRatio = snap.samplesPerPixel / idealSpp
+            // Re-render if zoom changed by >2x in either direction, or if panned beyond buffer
+            let zoomOk = zoomRatio > 0.5 && zoomRatio < 2.0
+
+            if visibleCovered && zoomOk {
+                return
+            }
+        }
+
+        generateTask?.cancel()
 
         // Compute the visible portion of the clip in timeline coordinates
         let visibleClipStart = max(clipRange.lowerBound, visibleRange.lowerBound)
         let visibleClipEnd = min(clipRange.upperBound, visibleRange.upperBound)
 
-        // Expand by padding (50% of visible width each side) to cover panCorrectionOffset gaps
+        // Expand by padding (50% of visible width each side) to cover pan buffer
         let paddingSamples = visibleRange.count / 2
         let paddedClipStart = max(clipRange.lowerBound, visibleClipStart - paddingSamples)
         let paddedClipEnd = min(clipRange.upperBound, visibleClipEnd + paddingSamples)
@@ -104,8 +141,7 @@ public class ClipRenderer: ObservableObject {
         let audioRange = max(0, audioStart)..<min(audioEnd, clip.audioFrameCount)
 
         guard audioRange.count > 0 else {
-            sampleData = []
-            leftPaddingPixels = 0
+            snapshot = .empty
             return
         }
 
@@ -114,14 +150,11 @@ public class ClipRenderer: ObservableObject {
         let paddedPixelEnd = viewport.screenX(for: paddedClipEnd, viewWidth: width)
         let paddedPixelWidth = Int(max(1, paddedPixelEnd - paddedPixelStart))
 
-        // Left padding = how far left of screen the padded region starts
-        let leftPad = max(0, -paddedPixelStart)
-
         let task = GenerateTask(audioBuffer: audioBuffer)
         generateTask = task
 
-        let capturedViewport = viewport
-        let capturedLeftPad = leftPad
+        let capturedPaddedStart = paddedClipStart
+        let capturedSpp = Double(audioRange.count) / Double(paddedPixelWidth)
 
         task.resume(
             width: CGFloat(paddedPixelWidth),
@@ -129,9 +162,11 @@ public class ClipRenderer: ObservableObject {
             displayMode: displayMode
         ) { [weak self] data in
             guard let self else { return }
-            self.sampleData = data
-            self.leftPaddingPixels = capturedLeftPad
-            self.renderedViewport = capturedViewport
+            self.snapshot = RenderSnapshot(
+                sampleData: data,
+                paddedTimelineStart: capturedPaddedStart,
+                samplesPerPixel: capturedSpp
+            )
         }
     }
 

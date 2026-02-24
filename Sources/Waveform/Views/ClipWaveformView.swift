@@ -16,35 +16,43 @@ public struct ClipWaveformView: View {
     public var body: some View {
         GeometryReader { geometry in
             let width = geometry.size.width
-            Renderer(waveformData: renderer.sampleData, displayMode: renderer.displayMode)
-                .offset(x: panCorrectionOffset(viewWidth: width) - renderer.leftPaddingPixels)
-                .onChange(of: viewport) { _, newViewport in
-                    renderer.update(viewport: newViewport, clip: clip, width: width)
-                }
-                .onChange(of: clip) { _, newClip in
-                    renderer.update(viewport: viewport, clip: newClip, width: width)
-                }
-                .onChange(of: width) { _, newWidth in
-                    renderer.update(viewport: viewport, clip: clip, width: newWidth)
-                }
-                .onChange(of: renderer.displayMode) { _, _ in
-                    renderer.update(viewport: viewport, clip: clip, width: width)
-                }
-                .onAppear {
-                    renderer.update(viewport: viewport, clip: clip, width: width)
-                }
+            let snap = renderer.snapshot
+            let (scale, offset) = waveformCorrection(snapshot: snap, viewWidth: width)
+
+            Renderer(
+                waveformData: snap.sampleData,
+                displayMode: renderer.displayMode,
+                xScale: scale,
+                xOffset: offset
+            )
+            .clipped()
+            .onChange(of: viewport) { _, newViewport in
+                renderer.update(viewport: newViewport, clip: clip, width: width)
+            }
+            .onChange(of: clip) { _, newClip in
+                renderer.update(viewport: viewport, clip: newClip, width: width)
+            }
+            .onChange(of: width) { _, newWidth in
+                renderer.update(viewport: viewport, clip: clip, width: newWidth)
+            }
+            .onChange(of: renderer.displayMode) { _, _ in
+                renderer.update(viewport: viewport, clip: clip, width: width)
+            }
+            .onAppear {
+                renderer.update(viewport: viewport, clip: clip, width: width)
+            }
         }
     }
 
-    /// Synchronous pixel offset to bridge the gap between the current viewport
-    /// and the viewport used to render the current sampleData.
-    /// Uses the current viewport's center as reference — stays near zero during
-    /// center-zoom (center doesn't move) and gives correct shift during panning.
-    private func panCorrectionOffset(viewWidth: CGFloat) -> CGFloat {
-        guard let rv = renderer.renderedViewport, rv.visibleCount > 0, viewport.visibleCount > 0 else { return 0 }
-        let refSample = (viewport.visibleRange.lowerBound + viewport.visibleRange.upperBound) / 2
-        let currentX = viewport.screenX(for: refSample, viewWidth: viewWidth)
-        let renderedX = rv.screenX(for: refSample, viewWidth: viewWidth)
-        return currentX - renderedX
+    /// Computes x scale and offset to map renderer pixels to current viewport screen coords.
+    /// Uses the same formula as grid lines: (sample - vp.lower) / vp.count * width.
+    /// This ensures waveform and grid positions use identical floating-point operations.
+    private func waveformCorrection(snapshot: RenderSnapshot, viewWidth: CGFloat) -> (scale: CGFloat, offset: CGFloat) {
+        guard snapshot.sampleData.count > 0, viewport.visibleCount > 0 else {
+            return (1, 0)
+        }
+        let scale = CGFloat(snapshot.samplesPerPixel) * viewWidth / CGFloat(viewport.visibleCount)
+        let offset = viewport.screenX(for: snapshot.paddedTimelineStart, viewWidth: viewWidth)
+        return (scale, offset)
     }
 }
