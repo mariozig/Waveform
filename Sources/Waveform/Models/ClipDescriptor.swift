@@ -39,16 +39,4 @@ public struct ClipDescriptor: Equatable, Sendable {
         timelinePosition..<timelineEndPosition
     }
 
-    /// Creates a ClipDescriptor from legacy padding values.
-    public static func fromPadding(
-        samplesToPrepend: Int,
-        audioFrameCount: Int,
-        sampleRate: Int
-    ) -> ClipDescriptor {
-        ClipDescriptor(
-            timelinePosition: samplesToPrepend,
-            audioFrameCount: audioFrameCount,
-            sampleRate: sampleRate
-        )
-    }
 }

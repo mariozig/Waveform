@@ -40,11 +40,11 @@ class GenerateTask {
             let samplesPerPoint = audioRange.count / pixelCount
 
             guard let floatChannelData = self.audioBuffer.floatChannelData else {
-                DispatchQueue.main.async { completion(sampleData) }
+                completion(sampleData)
                 return
             }
             guard samplesPerPoint > 0 else {
-                DispatchQueue.main.async { completion(sampleData) }
+                completion(sampleData)
                 return
             }
 
@@ -78,10 +78,8 @@ class GenerateTask {
                 TransientDetector.computeWeights(&sampleData)
             }
 
-            DispatchQueue.main.async {
-                guard !self.isCancelled.withLock({ $0 }) else { return }
-                completion(sampleData)
-            }
+            guard !self.isCancelled.withLock({ $0 }) else { return }
+            completion(sampleData)
         }
     }
 

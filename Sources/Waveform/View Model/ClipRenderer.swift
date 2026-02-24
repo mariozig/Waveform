@@ -126,47 +126,27 @@ public class ClipRenderer: ObservableObject {
 
         generateTask?.cancel()
 
-        // Compute the visible portion of the clip in timeline coordinates
-        let visibleClipStart = max(clipRange.lowerBound, visibleRange.lowerBound)
-        let visibleClipEnd = min(clipRange.upperBound, visibleRange.upperBound)
-
-        // Expand by padding (50% of visible width each side) to cover pan buffer
-        let paddingSamples = visibleRange.count / 2
-        let paddedClipStart = max(clipRange.lowerBound, visibleClipStart - paddingSamples)
-        let paddedClipEnd = min(clipRange.upperBound, visibleClipEnd + paddingSamples)
-
-        // Map padded range to audio file sample coordinates
-        let audioStart = clip.inPoint + (paddedClipStart - clip.timelinePosition)
-        let audioEnd = clip.inPoint + (paddedClipEnd - clip.timelinePosition)
-        let audioRange = max(0, audioStart)..<min(audioEnd, clip.audioFrameCount)
-
-        guard audioRange.count > 0 else {
+        guard let renderRange = clipRenderRange(clip: clip, viewport: viewport, viewWidth: width) else {
             snapshot = .empty
             return
         }
 
-        // Compute pixel positions for the padded range
-        let paddedPixelStart = viewport.screenX(for: paddedClipStart, viewWidth: width)
-        let paddedPixelEnd = viewport.screenX(for: paddedClipEnd, viewWidth: width)
-        let paddedPixelWidth = Int(max(1, paddedPixelEnd - paddedPixelStart))
-
         let task = GenerateTask(audioBuffer: audioBuffer)
         generateTask = task
 
-        let capturedPaddedStart = paddedClipStart
-        let capturedSpp = Double(audioRange.count) / Double(paddedPixelWidth)
-
         task.resume(
-            width: CGFloat(paddedPixelWidth),
-            audioRange: audioRange,
+            width: CGFloat(renderRange.pixelWidth),
+            audioRange: renderRange.audioRange,
             displayMode: displayMode
         ) { [weak self] data in
-            guard let self else { return }
-            self.snapshot = RenderSnapshot(
-                sampleData: data,
-                paddedTimelineStart: capturedPaddedStart,
-                samplesPerPixel: capturedSpp
-            )
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.snapshot = RenderSnapshot(
+                    sampleData: data,
+                    paddedTimelineStart: renderRange.paddedTimelineStart,
+                    samplesPerPixel: renderRange.samplesPerPixel
+                )
+            }
         }
     }
 

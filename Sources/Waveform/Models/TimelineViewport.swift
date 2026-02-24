@@ -9,14 +9,18 @@ public struct TimelineViewport: Equatable, Sendable {
     public var totalLength: Int
 
     public init(visibleRange: Range<Int>, totalLength: Int) {
-        self.visibleRange = visibleRange
-        self.totalLength = totalLength
+        let clampedTotal = max(0, totalLength)
+        let clampedLower = max(0, min(visibleRange.lowerBound, clampedTotal))
+        let clampedUpper = max(clampedLower, min(visibleRange.upperBound, clampedTotal))
+        self.visibleRange = clampedLower..<clampedUpper
+        self.totalLength = clampedTotal
     }
 
     /// Creates a viewport showing the entire timeline.
     public init(totalLength: Int) {
-        self.visibleRange = 0..<totalLength
-        self.totalLength = totalLength
+        let clampedTotal = max(0, totalLength)
+        self.visibleRange = 0..<clampedTotal
+        self.totalLength = clampedTotal
     }
 
     // MARK: - Derived Properties
