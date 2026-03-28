@@ -243,6 +243,97 @@ struct WaveformGeneratorTests {
     }
 }
 
+    // MARK: - Synthetic Data Init Tests
+
+    @Test("Synthetic init creates generator without audio file")
+    func syntheticInit_createsWithoutAudioFile() {
+        let samples = [SampleData(min: -0.5, max: 0.5), SampleData(min: -0.8, max: 0.8)]
+        let generator = WaveformGenerator(syntheticSamples: samples, totalSamples: 44100)
+
+        #expect(generator.audioFile == nil)
+        #expect(generator.audioBuffer == nil)
+    }
+
+    @Test("Synthetic init sets correct totalSamples via renderSamples")
+    func syntheticInit_correctTotalSamples() {
+        let samples = [SampleData(min: -0.3, max: 0.3)]
+        let generator = WaveformGenerator(syntheticSamples: samples, totalSamples: 882000)
+
+        #expect(generator.effectiveTotalSamples == 882000)
+        #expect(generator.renderSamples == 0..<882000)
+    }
+
+    @Test("Synthetic init totalVirtualSamples matches renderSamples")
+    func syntheticInit_totalVirtualSamples() {
+        let samples = [SampleData(min: -0.5, max: 0.5)]
+        let generator = WaveformGenerator(syntheticSamples: samples, totalSamples: 100000)
+
+        #expect(generator.totalVirtualSamples == 100000)
+    }
+
+    @Test("Synthetic init has no padding")
+    func syntheticInit_noPadding() {
+        let samples = [SampleData(min: -0.5, max: 0.5)]
+        let generator = WaveformGenerator(syntheticSamples: samples, totalSamples: 44100)
+
+        #expect(generator.samplesToPrepend == 0)
+        #expect(generator.samplesToAppend == 0)
+    }
+
+    @Test("Synthetic init position conversion works")
+    func syntheticInit_positionConversion() {
+        let samples = (0..<100).map { _ in SampleData(min: -0.5, max: 0.5) }
+        let generator = WaveformGenerator(syntheticSamples: samples, totalSamples: 44100)
+        generator.width = 300
+
+        // sample(for:) should convert pixel position to sample index
+        let midSample = generator.sample(for: 150)
+        #expect(midSample > 0)
+        #expect(midSample < 44100)
+    }
+
+    @Test("Synthetic init sample offset conversion works")
+    func syntheticInit_sampleOffsetConversion() {
+        let samples = (0..<100).map { _ in SampleData(min: -0.5, max: 0.5) }
+        let generator = WaveformGenerator(syntheticSamples: samples, totalSamples: 44100)
+        generator.width = 300
+
+        // sample(_:with:) should add pixel offset to existing sample
+        let newSample = generator.sample(22050, with: 10)
+        #expect(newSample > 22050)
+    }
+
+    @Test("Synthetic init refreshData is no-op")
+    func syntheticInit_refreshDataNoOp() {
+        let samples = [SampleData(min: -0.3, max: 0.3), SampleData(min: -0.7, max: 0.7)]
+        let generator = WaveformGenerator(syntheticSamples: samples, totalSamples: 44100)
+        generator.width = 200
+
+        // refreshData should not crash or clear sampleData for synthetic generators
+        generator.refreshData()
+        // sampleData is internal, but we can verify the generator still works
+        #expect(generator.effectiveTotalSamples == 44100)
+    }
+
+    @Test("Synthetic init with frequency bar pattern")
+    func syntheticInit_frequencyBarPattern() {
+        // This is how WalkUpFire uses it for Apple Music
+        let pattern: [Float] = [0.15, 0.30, 0.50, 0.70, 0.85, 0.70, 0.50, 0.30]
+        var samples: [SampleData] = []
+        for i in 0..<400 {
+            let height = pattern[i % pattern.count]
+            samples.append(SampleData(min: -height, max: height))
+        }
+        let totalSamples = Int(240 * 44100) // 240 second song
+
+        let generator = WaveformGenerator(syntheticSamples: samples, totalSamples: totalSamples)
+
+        #expect(generator.effectiveTotalSamples == totalSamples)
+        #expect(generator.audioFile == nil)
+        #expect(generator.renderSamples.count == totalSamples)
+    }
+}
+
 // MARK: - Test Error
 
 private enum TestError: Error {
