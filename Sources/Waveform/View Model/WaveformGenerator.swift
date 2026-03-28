@@ -1,12 +1,12 @@
 import AVFoundation
 import SwiftUI
 
-/// An object that generates waveform data from an `AVAudioFile`.
+/// An object that generates waveform data from an `AVAudioFile` or synthetic sample data.
 public class WaveformGenerator: ObservableObject {
-    /// The audio file initially used to create the generator.
-    public let audioFile: AVAudioFile
-    /// An audio buffer containing the original audio file decoded as PCM data.
-    public let audioBuffer: AVAudioPCMBuffer
+    /// The audio file initially used to create the generator (nil for synthetic data).
+    public let audioFile: AVAudioFile?
+    /// An audio buffer containing the original audio file decoded as PCM data (nil for synthetic data).
+    public let audioBuffer: AVAudioPCMBuffer?
 
     /// Number of silent samples to prepend virtually (for time alignment).
     public private(set) var samplesToPrepend: Int
@@ -19,7 +19,11 @@ public class WaveformGenerator: ObservableObject {
 
     /// Total samples including virtual padding.
     public var totalVirtualSamples: Int {
-        Int(audioBuffer.frameLength) + samplesToPrepend + samplesToAppend
+        if let audioBuffer {
+            return Int(audioBuffer.frameLength) + samplesToPrepend + samplesToAppend
+        }
+        // Synthetic mode: use renderSamples range
+        return renderSamples.upperBound
     }
 
     /// Effective total for scaling (uses global if set, otherwise local).
@@ -149,6 +153,9 @@ public class WaveformGenerator: ObservableObject {
     }
     
     func refreshData() {
+        // Synthetic generators have pre-set sampleData — no regeneration needed.
+        guard let audioBuffer else { return }
+
         generateTask?.cancel()
         guard width > 0 else { return }
         generateTask = GenerateTask(
@@ -208,6 +215,28 @@ public class WaveformGenerator: ObservableObject {
         let ratio = CGFloat(renderSamples.count) / width
         let sample = oldSample + Int(offset * ratio)
         return min(max(0, sample), effectiveTotalSamples)
+    }
+
+    // MARK: - Synthetic Data
+
+    /// Creates a generator with pre-built sample data, no audio file required.
+    /// Use this for decorative waveforms (e.g., Apple Music frequency bars)
+    /// where real audio data is unavailable but you still want the full
+    /// handle/selection/highlight UI.
+    ///
+    /// - Parameters:
+    ///   - sampleData: Pre-built sample data for rendering. The count determines
+    ///     the visual width in samples.
+    ///   - totalSamples: Total logical sample count (determines handle positioning
+    ///     and selection range). Typically `sampleRate * duration`.
+    public init(syntheticSamples sampleData: [SampleData], totalSamples: Int) {
+        self.audioFile = nil
+        self.audioBuffer = nil
+        self.samplesToPrepend = 0
+        self.samplesToAppend = 0
+        self.globalTotalSamples = nil
+        self.renderSamples = 0..<totalSamples
+        self.sampleData = sampleData
     }
 
     // MARK: - Preview Support
